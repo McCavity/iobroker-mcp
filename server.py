@@ -367,15 +367,30 @@ def query_history(
         }
 
     body = resp.json()
-    # SimpleAPI returns either an array directly or an envelope with data.
-    points = body if isinstance(body, list) else body.get("data", body)
+    # SimpleAPI/query returns Grafana-SimpleJSON shape: a list of one or
+    # more {target, datapoints[[val, ts], ...]} envelopes. Flatten to a
+    # list of {ts, val} dicts so callers don't have to know that format.
+    points: list[dict[str, Any]] = []
+    if isinstance(body, list):
+        for target in body:
+            if not isinstance(target, dict):
+                continue
+            for pair in target.get("datapoints", []) or []:
+                if isinstance(pair, (list, tuple)) and len(pair) >= 2:
+                    val, ts = pair[0], pair[1]
+                    points.append({"ts": ts, "val": val})
+                elif isinstance(pair, dict):
+                    # Some adapters emit {val, ts} dicts directly.
+                    points.append({"ts": pair.get("ts"), "val": pair.get("val")})
+
     return {
         "ok": True,
         "state_id": state_id,
         "date_from": date_from,
         "date_to": date_to,
         "aggregate": aggregate,
-        "result": points,
+        "count": len(points),
+        "datapoints": points,
     }
 
 
