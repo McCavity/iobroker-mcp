@@ -73,16 +73,17 @@ Credentials come from `.env` next to `server.py`.
 | Tool | Description |
 |---|---|
 | `read_state(state_id)` | Reads value + full metadata of a state. Handles Umlauts and spaces in state IDs. |
+| `read_states_bulk(state_ids)` | Reads multiple states in one call via `/getBulk` — returns an array of `{id, val, ack, ts, …}`. |
+| `list_objects(pattern, limit=50)` | Lists objects matching an ioBroker glob (`sonoff.*`, `zigbee.0.*`, `*.POWER`). Returns compact metadata (name, role, type, read/write). Limit caps the response size. |
+| `search_objects(pattern)` | Faster ID-only search — returns flat list of state IDs, no metadata. Use when you only need names. |
+| `query_history(state_id, date_from, date_to=now, aggregate="none", count=100)` | Pulls historical values via `/query` from whichever history adapter is configured in the SimpleAPI instance (set the "Datenquelle" dropdown to `influxdb.0` or similar). ISO 8601 timestamps. |
 
-**Coming in the next iteration (phase C)**
+**Write-side**
 
-- `write_state(state_id, value, ack?)` — set a state via `/set/<id>?value=…`
-- `toggle_state(state_id)` — convenience toggle for boolean switches
-- `read_states_bulk(state_ids)` — `/getBulk/<id1>,<id2>,…`
-- `list_objects(pattern)` — `/objects?pattern=…` with Common-Metadata
-- `search_objects(pattern)` — `/search?pattern=…`
-- `query_history(state_id, from, to)` — `/query/…?dateFrom=…&dateTo=…`,
-  pulls from the InfluxDB-backed history adapter
+| Tool | Description |
+|---|---|
+| `write_state(state_id, value, ack=False)` | Sets a state via `/set/<id>?value=…`. Booleans serialised as `true`/`false`. `ack=True` marks the write as device-confirmed (rare from MCP). |
+| `toggle_state(state_id)` | Flips a boolean state via `/toggle` — convenience for switches. |
 
 ## Project layout
 
