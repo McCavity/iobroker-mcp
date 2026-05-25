@@ -74,7 +74,7 @@ Credentials come from `.env` next to `server.py`.
 |---|---|
 | `read_state(state_id)` | Reads value + full metadata of a state. Handles Umlauts and spaces in state IDs. |
 | `read_states_bulk(state_ids)` | Reads multiple states in one call via `/getBulk` — returns an array of `{id, val, ack, ts, …}`. |
-| `list_objects(pattern, limit=50)` | Lists objects matching an ioBroker glob (`sonoff.*`, `zigbee.0.*`, `*.POWER`). Returns compact metadata (name, role, type, read/write). Limit caps the response size. |
+| `list_objects(pattern, limit=50)` | Lists objects matching an ioBroker pattern (see "Pattern matching" below). Returns compact metadata (name, role, type, read/write). Limit caps the response size. |
 | `search_objects(pattern)` | Faster ID-only search — returns flat list of state IDs, no metadata. Use when you only need names. |
 | `query_history(state_id, date_from, date_to=now, aggregate="none", count=100)` | Pulls historical values via `/query` from whichever history adapter is configured in the SimpleAPI instance (set the "Datenquelle" dropdown to `influxdb.0` or similar). ISO 8601 timestamps. |
 
@@ -84,6 +84,29 @@ Credentials come from `.env` next to `server.py`.
 |---|---|
 | `write_state(state_id, value, ack=False)` | Sets a state via `/set/<id>?value=…`. Booleans serialised as `true`/`false`. `ack=True` marks the write as device-confirmed (rare from MCP). |
 | `toggle_state(state_id)` | Flips a boolean state via `/toggle` — convenience for switches. |
+
+## Pattern matching
+
+Both `list_objects` and `search_objects` take a `pattern` argument that is
+forwarded to ioBroker's SimpleAPI `/objects` and `/search` endpoints. A
+couple of gotchas worth knowing:
+
+- **Glob-style, segment-anchored.** ioBroker matches the pattern as a
+  whole-string glob against the full state ID. Examples that work:
+  `sonoff.*`, `zigbee.0.*`, `*.POWER`, `zigbee.0.*battery`.
+- **Bare strings are auto-globbed.** `search_objects("smartcontrol")`
+  is rewritten to `smartcontrol.*` before the call — what you almost
+  always want. The response includes `effective_pattern` so you can
+  see exactly what was sent.
+- **In-string substring wildcards do not work.** `*battery*` returns
+  zero matches, because SimpleAPI's glob isn't a substring search.
+  Use a segment-anchored pattern (`zigbee.0.*battery`) or fetch a
+  broader listing and filter client-side.
+- **`script.js.*` is filtered by SimpleAPI.** Script objects don't
+  show up in `/objects` listings — likely for payload-size reasons.
+  If you need a script's source, use `read_state` with the exact
+  path: `read_state("script.js.scenes.lighting.smart-switches")`.
+  `list_objects` returns a `hint` field in this case to remind you.
 
 ## Project layout
 

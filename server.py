@@ -65,6 +65,30 @@ def _encode_id(state_id: str) -> str:
     return quote(state_id, safe=".")
 
 
+def _normalize_pattern(pattern: str) -> str:
+    """Treat bare strings (no `*`/`?` wildcards) as namespace prefixes.
+
+    ioBroker's SimpleAPI matches `pattern` as a complete glob against
+    the full state ID. A bare string like `smartcontrol` only matches
+    the literal state ID `smartcontrol` — which never exists, because
+    every real state is namespaced (`smartcontrol.0.info.connection`).
+
+    Users almost always mean "give me everything under this namespace",
+    so we transparently rewrite `foo` → `foo.*`. Patterns that already
+    contain wildcards pass through unchanged.
+
+    Examples:
+        smartcontrol         → smartcontrol.*
+        zigbee.0.            → zigbee.0.*    (trailing dot stripped)
+        sonoff.*             → sonoff.*      (unchanged)
+        *.POWER              → *.POWER       (unchanged)
+        zigbee.0.*battery*   → zigbee.0.*battery*  (unchanged)
+    """
+    if "*" in pattern or "?" in pattern:
+        return pattern
+    return pattern.rstrip(".") + ".*"
+
+
 # ---------------------------------------------------------------------------
 # MCP server
 # ---------------------------------------------------------------------------
@@ -243,19 +267,36 @@ def read_states_bulk(state_ids: list[str]) -> dict[str, Any]:
 
 @mcp.tool()
 def list_objects(pattern: str, limit: int = 50) -> dict[str, Any]:
-    """List objects matching an ioBroker wildcard pattern via `/objects`.
+    """List objects matching an ioBroker pattern via `/objects`.
 
-    Pattern uses ioBroker glob style: `sonoff.*`, `zigbee.0.*`,
-    `0_userdata.0.trigger.*`. Beware large result sets — `/objects` can
-    return hundreds of KB for broad patterns. The `limit` argument caps
-    the returned list (sorted by state ID) to keep MCP responses small.
+    Pattern uses ioBroker glob style. **Bare strings (no `*`/`?`) are
+    automatically treated as namespace prefixes**: passing `smartcontrol`
+    queries `smartcontrol.*` under the hood. The exact pattern sent to
+    SimpleAPI is returned as `effective_pattern` in the response.
 
-    Returns compact metadata per object: id, name, role, type, read /
-    write flags. Use `read_state` afterwards if you need the full
-    object including custom blocks and ACL.
+    Pattern examples:
+
+    - `sonoff.*`          → all Sonoff states
+    - `zigbee.0.*`        → all zigbee adapter states
+    - `*.POWER`           → all Tasmota POWER states across adapters
+    - `smartcontrol`      → auto-rewritten to `smartcontrol.*`
+
+    Beware large result sets — `/objects` can return hundreds of KB
+    for broad patterns. The `limit` argument caps the returned list
+    (sorted by state ID) to keep MCP responses small. Returns compact
+    metadata per object: id, name, role, type, read / write flags.
+    Use `read_state` afterwards if you need the full object including
+    custom blocks and ACL.
+
+    Caveat — script.js filter: SimpleAPI deliberately filters out
+    `script.js.*` objects from listings (likely for performance /
+    payload-size reasons). If you need a script's source, use
+    `read_state` with the exact script path, e.g.
+    `read_state("script.js.scenes.lighting.smart-switches")`.
     """
+    effective = _normalize_pattern(pattern)
     with httpx.Client(timeout=IOBROKER_TIMEOUT, auth=_auth()) as client:
-        resp = client.get(f"{IOBROKER_URL}/objects", params={"pattern": pattern})
+        resp = client.get(f"{IOBROKER_URL}/objects", params={"pattern": effective})
 
     if resp.status_code >= 400:
         return {
@@ -263,6 +304,7 @@ def list_objects(pattern: str, limit: int = 50) -> dict[str, Any]:
             "status": resp.status_code,
             "error": resp.text[:500],
             "pattern": pattern,
+            "effective_pattern": effective,
         }
 
     full = resp.json() if isinstance(resp.json(), dict) else {}
@@ -283,14 +325,26 @@ def list_objects(pattern: str, limit: int = 50) -> dict[str, Any]:
             "write": common.get("write", False),
         })
 
-    return {
+    result: dict[str, Any] = {
         "ok": True,
         "pattern": pattern,
+        "effective_pattern": effective,
         "total_matches": len(keys),
         "returned": len(selected),
         "truncated": truncated,
         "objects": compact,
     }
+
+    # Friendly hint when querying script.js with no results — this is a
+    # known SimpleAPI filter, not a "states don't exist" situation.
+    if len(keys) == 0 and effective.startswith("script.js"):
+        result["hint"] = (
+            "SimpleAPI filters script.js objects from /objects listings. "
+            "To fetch a script's source, use read_state with the exact "
+            "path, e.g. read_state('script.js.scenes.lighting.foo')."
+        )
+
+    return result
 
 
 @mcp.tool()
@@ -299,9 +353,27 @@ def search_objects(pattern: str) -> dict[str, Any]:
 
     Faster than `list_objects` when you only need IDs (no metadata).
     Returns a flat list of state IDs.
+
+    Pattern uses ioBroker glob style. **Bare strings (no `*`/`?`) are
+    automatically treated as namespace prefixes**: passing `smartcontrol`
+    queries `smartcontrol.*` under the hood. The exact pattern sent to
+    SimpleAPI is returned as `effective_pattern` in the response.
+
+    Pattern examples:
+
+    - `sonoff.*`          → all Sonoff state IDs
+    - `zigbee.0.*`        → all zigbee adapter state IDs
+    - `*.battery`         → all battery states across adapters
+    - `smartcontrol`      → auto-rewritten to `smartcontrol.*`
+
+    Caveat: SimpleAPI's `/search` matches the pattern as a whole-string
+    glob — in-string substring wildcards like `*battery*` do **not**
+    work (they return 0). Use a segment-anchored pattern instead, e.g.
+    `zigbee.0.*battery` for "all battery states under zigbee.0".
     """
+    effective = _normalize_pattern(pattern)
     with httpx.Client(timeout=IOBROKER_TIMEOUT, auth=_auth()) as client:
-        resp = client.get(f"{IOBROKER_URL}/search", params={"pattern": pattern})
+        resp = client.get(f"{IOBROKER_URL}/search", params={"pattern": effective})
 
     if resp.status_code >= 400:
         return {
@@ -309,11 +381,18 @@ def search_objects(pattern: str) -> dict[str, Any]:
             "status": resp.status_code,
             "error": resp.text[:500],
             "pattern": pattern,
+            "effective_pattern": effective,
         }
 
     body = resp.json()
     ids = body if isinstance(body, list) else list(body.keys() if isinstance(body, dict) else [])
-    return {"ok": True, "pattern": pattern, "count": len(ids), "ids": ids}
+    return {
+        "ok": True,
+        "pattern": pattern,
+        "effective_pattern": effective,
+        "count": len(ids),
+        "ids": ids,
+    }
 
 
 # --- History --------------------------------------------------------------

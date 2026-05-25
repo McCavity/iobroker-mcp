@@ -32,6 +32,18 @@ Transport: stdio. Framework: [FastMCP](https://github.com/jlowin/fastmcp).
 
 ## ioBroker SimpleAPI quirks
 
+- **Pattern matching is whole-string glob, not substring.** `/search`
+  and `/objects` match the `pattern` parameter as a complete glob
+  against the full state ID. A bare string like `smartcontrol` only
+  matches the literal `smartcontrol` (which never exists — every
+  real state is namespaced). We handle this in `_normalize_pattern`
+  by appending `.*` to wildcard-free patterns. In-string substring
+  wildcards like `*battery*` also don't work — those return zero.
+  Use segment-anchored patterns (`zigbee.0.*battery`) instead.
+- **`/objects` filters `script.js.*`** — script objects don't show
+  up in listings, likely for payload-size reasons. Use `read_state`
+  with the exact script path to fetch sources. `list_objects` returns
+  a `hint` field when a script.js pattern yields zero matches.
 - **`/help` returns a JSON map** of endpoint name → example URL, not
   human-readable text. Useful as a smoke test.
 - **`/get/<id>`** returns the full state object with `common`, `native`,
