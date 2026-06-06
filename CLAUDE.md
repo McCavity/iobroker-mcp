@@ -38,8 +38,14 @@ Transport: stdio. Framework: [FastMCP](https://github.com/jlowin/fastmcp).
   matches the literal `smartcontrol` (which never exists — every
   real state is namespaced). We handle this in `_normalize_pattern`
   by appending `.*` to wildcard-free patterns. In-string substring
-  wildcards like `*battery*` also don't work — those return zero.
-  Use segment-anchored patterns (`zigbee.0.*battery`) instead.
+  wildcards like `*battery*` also don't work — those return zero, and
+  so does a wildcard glued to a segment name without a separating dot
+  (`zigbee.0.*battery`). The `*` must sit at a `.` boundary: use
+  `zigbee.0.*.battery` or `*.battery`. Verified live 2026-06-06
+  (`zigbee.0.*battery` → 0, `zigbee.0.*.battery` → 13). *(Possible
+  future `_normalize_pattern` enhancement: when a pattern yields zero
+  and has a `*` glued to a trailing segment, return a `hint`
+  suggesting the dot-separated form — not implemented.)*
 - **`/objects` filters `script.js.*`** — script objects don't show
   up in listings, likely for payload-size reasons. Use `read_state`
   with the exact script path to fetch sources. `list_objects` returns

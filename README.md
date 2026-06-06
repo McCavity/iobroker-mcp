@@ -91,17 +91,22 @@ Both `list_objects` and `search_objects` take a `pattern` argument that is
 forwarded to ioBroker's SimpleAPI `/objects` and `/search` endpoints. A
 couple of gotchas worth knowing:
 
-- **Glob-style, segment-anchored.** ioBroker matches the pattern as a
-  whole-string glob against the full state ID. Examples that work:
-  `sonoff.*`, `zigbee.0.*`, `*.POWER`, `zigbee.0.*battery`.
+- **Glob-style, segment-anchored — `*` must sit at a `.` boundary.**
+  ioBroker matches the pattern as a whole-string glob against the full
+  state ID. Examples that work: `sonoff.*`, `zigbee.0.*`, `*.POWER`,
+  `*.battery`, `zigbee.0.*.battery` (note the **dot before the leaf
+  segment**). A wildcard glued to a segment name with no separating dot
+  — `zigbee.0.*battery` — returns **zero**, just like an in-string
+  substring wildcard (see below). Verified live 2026-06-06:
+  `zigbee.0.*battery` → 0 hits, `zigbee.0.*.battery` → 13.
 - **Bare strings are auto-globbed.** `search_objects("smartcontrol")`
   is rewritten to `smartcontrol.*` before the call — what you almost
   always want. The response includes `effective_pattern` so you can
   see exactly what was sent.
 - **In-string substring wildcards do not work.** `*battery*` returns
   zero matches, because SimpleAPI's glob isn't a substring search.
-  Use a segment-anchored pattern (`zigbee.0.*battery`) or fetch a
-  broader listing and filter client-side.
+  Use a dot-separated segment-anchored pattern (`zigbee.0.*.battery`
+  or `*.battery`) or fetch a broader listing and filter client-side.
 - **`script.js.*` is filtered by SimpleAPI.** Script objects don't
   show up in `/objects` listings — likely for payload-size reasons.
   If you need a script's source, use `read_state` with the exact
